@@ -14,7 +14,7 @@ const authMiddleware = require("../middleware/authMiddleware");
 
 // ---------------- CONFIG ----------------
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-this";
-const FASTAPI_URL = process.env.FASTAPI_URL || "http://localhost:8000/predict";
+const FASTAPI_URL = process.env.FASTAPI_URL || "https://silkworm-ml.onrender.com";
 
 // Ensure uploads directory exists
 const uploadDir = "uploads";
@@ -78,7 +78,7 @@ const diseaseInfoMap = {
 
 // ---------------- ROUTES ----------------
 
-// POST /upload → upload image & predict
+// POST /upload → upload single image & predict
 router.post("/", authMiddleware, upload.single("image"), async (req, res) => {
   try {
     if (!req.file)
@@ -93,12 +93,12 @@ router.post("/", authMiddleware, upload.single("image"), async (req, res) => {
       contentType: req.file.mimetype,
     });
 
-    const aiResponse = await axios.post(FASTAPI_URL, formData, {
+    const aiResponse = await axios.post(`${FASTAPI_URL}/predict`, formData, {
       headers: { ...formData.getHeaders() },
       timeout: 30000,
     });
 
-    const prediction = aiResponse.data;
+    const prediction = aiResponse.data.predictions[0];
 
     // If diseased → pick a random disease
     let diseaseInfo = null;
@@ -160,6 +160,95 @@ router.post("/", authMiddleware, upload.single("image"), async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Error processing upload", error: error.message });
+  }
+});
+
+// POST /upload/predict → handle multiple images
+router.post("/predict", authMiddleware, upload.array("files", 10), async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "No image files provided" 
+      });
+    }
+
+    const predictions = [];
+
+    for (const file of req.files) {
+      const formData = new FormData();
+      formData.append("file", fs.createReadStream(file.path), {
+        filename: file.originalname,
+        contentType: file.mimetype,
+      });
+
+      const aiResponse = await axios.post(`${FASTAPI_URL}/predict`, formData, {
+        headers: { ...formData.getHeaders() },
+        timeout: 30000,
+      });
+
+      const prediction = aiResponse.data.predictions[0];
+
+      let diseaseInfo = null;
+      if (prediction.label.toLowerCase() === "diseased") {
+        const diseases = Object.keys(diseaseInfoMap);
+        const randomDisease = diseases[Math.floor(Math.random() * diseases.length)];
+        diseaseInfo = diseaseInfoMap[randomDisease];
+      }
+
+      const uploadRecord = new Upload({
+        userId: req.user._id,
+        imageURL: `/uploads/${file.filename}`,
+        filename: file.filename,
+        label: prediction.label,
+        confidence: prediction.confidence,
+        probabilities: prediction.probabilities || null,
+        diseaseInfo,
+        imageSize: file.size,
+        mimeType: file.mimetype,
+        timestamp: new Date(),
+      });
+
+      await uploadRecord.save();
+
+      predictions.push({
+        label: prediction.label,
+        confidence: prediction.confidence,
+        disease_name: diseaseInfo ? diseaseInfo.name : null,
+        preventive_measures: diseaseInfo ? diseaseInfo.preventiveMeasures : [],
+      });
+
+      // Cleanup temp file
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    }
+
+    res.status(200).json({
+      success: true,
+      predictions: predictions
+    });
+
+  } catch (error) {
+    console.error("Predict error:", error.message);
+    
+    // Cleanup files on error
+    if (req.files) {
+      req.files.forEach(file => {
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      });
+    }
+
+    if (error.code === "ECONNREFUSED") {
+      return res.status(503).json({
+        success: false,
+        message: "AI service unavailable",
+      });
+    }
+
+    res.status(500).json({ 
+      success: false, 
+      message: "Error processing images", 
+      error: error.message 
+    });
   }
 });
 

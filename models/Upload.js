@@ -18,38 +18,39 @@ const uploadSchema = new mongoose.Schema({
   },
   label: {
     type: String,
-    enum: ['Healthy', 'Diseased'],
+    enum: ['healthy', 'diseased', 'Healthy', 'Diseased'], // Allow both cases
     required: true
   },
   confidence: {
     type: Number,
     required: true,
     min: 0,
-    max: 100
+    max: 1  // Changed from 100 to 1 (ML returns 0-1 decimal)
   },
   probabilities: {
-    Healthy: Number,
-    Diseased: Number
+    type: mongoose.Schema.Types.Mixed, // More flexible
+    default: null
+  },
+  diseaseInfo: {  // Add this field
+    name: String,
+    preventiveMeasures: [String]
   },
   timestamp: {
     type: Date,
     default: Date.now,
     index: true
   },
-  // Optional: Store additional metadata
   imageSize: {
-    type: Number // in bytes
+    type: Number
   },
   mimeType: {
     type: String
   },
-  // Optional: Location data if available
   location: {
     latitude: Number,
     longitude: Number,
     village: String
   },
-  // Optional: Farmer notes
   notes: {
     type: String,
     maxlength: 500

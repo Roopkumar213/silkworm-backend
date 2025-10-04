@@ -5,7 +5,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const authRoutes = require('./routes/auth');
 const uploadRoutes = require('./routes/upload');
-
+const axios = require('axios');
 dotenv.config();
 
 const app = express();
@@ -73,6 +73,20 @@ app.use((req, res) => {
     success: false,
     message: 'Route not found'
   });
+});
+
+app.post('/predict', async (req, res) => {
+  try {
+    const formData = new FormData();
+    // Forward files to ML service
+    const response = await axios.post('https://silkworm-ml.onrender.com/predict', 
+      req.body, 
+      { headers: req.headers }
+    );
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 const PORT = process.env.PORT || 5000;
