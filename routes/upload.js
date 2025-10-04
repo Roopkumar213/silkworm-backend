@@ -173,21 +173,29 @@ router.post("/predict", authMiddleware, upload.array("files", 10), async (req, r
       });
     }
 
-    const predictions = [];
-
-    for (const file of req.files) {
-      const formData = new FormData();
-      formData.append("file", fs.createReadStream(file.path), {
+    // Create ONE FormData with ALL files
+    const formData = new FormData();
+    
+    req.files.forEach(file => {
+      formData.append("files", fs.createReadStream(file.path), {
         filename: file.originalname,
         contentType: file.mimetype,
       });
+    });
 
-      const aiResponse = await axios.post(`${FASTAPI_URL}/predict`, formData, {
-        headers: { ...formData.getHeaders() },
-        timeout: 30000,
-      });
+    // Send all files in ONE request
+    const aiResponse = await axios.post(`${FASTAPI_URL}/predict`, formData, {
+      headers: { ...formData.getHeaders() },
+      timeout: 60000, // Increase timeout for multiple files
+    });
 
-      const prediction = aiResponse.data.predictions[0];
+    const predictions = aiResponse.data.predictions;
+
+    // Save each prediction to database
+    const results = [];
+    for (let i = 0; i < predictions.length; i++) {
+      const prediction = predictions[i];
+      const file = req.files[i];
 
       let diseaseInfo = null;
       if (prediction.label.toLowerCase() === "diseased") {
@@ -211,7 +219,7 @@ router.post("/predict", authMiddleware, upload.array("files", 10), async (req, r
 
       await uploadRecord.save();
 
-      predictions.push({
+      results.push({
         label: prediction.label,
         confidence: prediction.confidence,
         disease_name: diseaseInfo ? diseaseInfo.name : null,
@@ -224,11 +232,12 @@ router.post("/predict", authMiddleware, upload.array("files", 10), async (req, r
 
     res.status(200).json({
       success: true,
-      predictions: predictions
+      predictions: results
     });
 
   } catch (error) {
     console.error("Predict error:", error.message);
+    console.error("Full error:", error.response?.data || error);
     
     // Cleanup files on error
     if (req.files) {
@@ -237,10 +246,10 @@ router.post("/predict", authMiddleware, upload.array("files", 10), async (req, r
       });
     }
 
-    if (error.code === "ECONNREFUSED") {
+    if (error.code === "ECONNREFUSED" || error.code === "ETIMEDOUT") {
       return res.status(503).json({
         success: false,
-        message: "AI service unavailable",
+        message: "AI service unavailable. Please try again.",
       });
     }
 
@@ -251,17 +260,4 @@ router.post("/predict", authMiddleware, upload.array("files", 10), async (req, r
     });
   }
 });
-
-// GET /upload/history → user's past uploads
-router.get("/history", authMiddleware, async (req, res) => {
-  try {
-    const uploads = await Upload.find({ userId: req.user._id }).sort({ timestamp: -1 });
-    res.json({ success: true, uploads });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to fetch history", error: err.message });
-  }
-});
-
 module.exports = router;
